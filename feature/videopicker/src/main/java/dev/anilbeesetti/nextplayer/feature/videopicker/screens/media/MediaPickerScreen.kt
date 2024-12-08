@@ -3,11 +3,13 @@
 package dev.anilbeesetti.nextplayer.feature.videopicker.screens.media
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -37,14 +39,17 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewParameter
@@ -75,8 +80,85 @@ import dev.anilbeesetti.nextplayer.feature.videopicker.composables.MediaView
 import dev.anilbeesetti.nextplayer.feature.videopicker.composables.QuickSettingsDialog
 import dev.anilbeesetti.nextplayer.feature.videopicker.composables.TextIconToggleButton
 import dev.anilbeesetti.nextplayer.feature.videopicker.screens.MediaState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
+import kotlinx.coroutines.withContext
 
 const val CIRCULAR_PROGRESS_INDICATOR_TEST_TAG = "circularProgressIndicator"
+
+
+fun isYoutubeUrl(url: String): Boolean {
+    return url.contains ("youtube.com") || url.contains("youtu.be")
+}
+
+fun getYoutubeVideoId(url: String): String {
+    val regex = "(?<=watch\\?v=|/videos/|embed\\/|youtu.be\\/|\\/v\\/|\\/e\\/|watch\\?v%3D|watch\\?feature=player_embedded&v=|%2Fvideos%2F|embed%\u200C\u200B2F|youtu.be%2F|%2Fv%2F)[^#\\&\\?\\n]*"
+    val pattern = Regex(regex)
+    val matchResult = pattern.find(url)
+    val id = matchResult?.value ?: ""
+    Log.d("Youtube ID", id)
+    return id
+}
+
+suspend fun fetchDownloadLink(id: String): String? {
+    val client = OkHttpClient()
+    val rapidApiKey = "6fabfe3ba0msha10853256d5c5f9p1c1247jsnf1625ea46cb6"
+    val url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl?id=$id"
+
+    val request = Request.Builder()
+        .url(url)
+        .addHeader("accept", "*/*")
+        .addHeader("accept-language", "en-US,en;q=0.9")
+        .addHeader("priority", "u=1, i")
+        .addHeader("sec-fetch-dest", "empty")
+        .addHeader("sec-fetch-mode", "cors")
+        .addHeader("sec-fetch-site", "cross-site")
+        .addHeader("x-rapidapi-host", "ytstream-download-youtube-videos.p.rapidapi.com")
+        .addHeader("x-rapidapi-key", rapidApiKey)
+        .addHeader("Referer", "https://ytdlx.vercel.app/")
+        .addHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+        .get()
+        .build()
+
+    return try {
+        withContext(Dispatchers.IO) {
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val responseBody = response.body?.string()
+                if (responseBody != null) {
+                    val json = JSONObject(responseBody)
+                    val formats = json.getJSONArray("formats")
+                    var bestQualityUrl: String? = null
+                    var maxBitrate = 0
+
+                    for (i in 0 until formats.length()) {
+                        val format = formats.getJSONObject(i)
+                        val bitrate = format.getInt("bitrate")
+                        if (bitrate > maxBitrate) {
+                            maxBitrate = bitrate
+                            bestQualityUrl = format.getString("url")
+                        }
+                    }
+                    bestQualityUrl
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        }
+    } catch (e: IOException) {
+        e.printStackTrace()
+        null
+    }
+}
 
 @Composable
 fun MediaPickerRoute(
@@ -289,9 +371,24 @@ fun NetworkUrlDialog(
             )
         },
         confirmButton = {
+            val coroutineScope = rememberCoroutineScope()
+
             DoneButton(
                 enabled = url.isNotBlank(),
-                onClick = { onDone(url) },
+                onClick = {
+                    coroutineScope.launch {
+                        if (isYoutubeUrl(url)) {
+                            val id = getYoutubeVideoId(url)
+                            val downloadLink = fetchDownloadLink(id)
+                            Log.d("Download Link", downloadLink.toString())
+                            if (downloadLink != null) {
+                                onDone(downloadLink)
+                            }
+                        } else {
+                            onDone(url)
+                        }
+                    }
+                },
             )
         },
         dismissButton = { CancelButton(onClick = onDismiss) },
