@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtimeCompose)
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     implementation(libs.coil.kt.compose)
     implementation(libs.accompanist.permissions)
